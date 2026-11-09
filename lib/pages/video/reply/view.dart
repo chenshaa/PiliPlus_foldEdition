@@ -23,11 +23,16 @@ class VideoReplyPanel extends StatefulWidget {
     this.replyLevel = 1,
     required this.heroTag,
     required this.isNested,
+    this.leadingSlivers,
   });
 
   final int replyLevel;
   final String heroTag;
   final bool isNested;
+
+  /// 拼在评论列表前面的 sliver（简介 / 选集等），
+  /// 与评论共用同一个 [CustomScrollView]，让右侧区域整体滚动。
+  final List<Widget>? leadingSlivers;
 
   @override
   State<VideoReplyPanel> createState() => _VideoReplyPanelState();
@@ -79,6 +84,14 @@ class _VideoReplyPanelState extends State<VideoReplyPanel>
             physics: const AlwaysScrollableScrollPhysics(),
             key: const PageStorageKey(_VideoReplyPanelState),
             slivers: [
+              ...?widget.leadingSlivers,
+              if (widget.leadingSlivers?.isNotEmpty ?? false)
+                SliverToBoxAdapter(
+                  child: Divider(
+                    height: 1,
+                    color: colorScheme.outline.withValues(alpha: 0.1),
+                  ),
+                ),
               SliverFloatingHeaderWidget(
                 backgroundColor: colorScheme.surface,
                 child: Padding(

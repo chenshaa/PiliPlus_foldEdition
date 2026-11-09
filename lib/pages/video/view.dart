@@ -35,6 +35,7 @@ import 'package:PiliPlus/pages/video/introduction/pgc/widgets/season.dart'
     as pgc;
 import 'package:PiliPlus/pages/video/introduction/ugc/controller.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/view.dart';
+import 'package:PiliPlus/pages/video/introduction/ugc/widgets/action_item.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/page.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/season.dart'
     as ugc;
@@ -68,6 +69,7 @@ import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/theme_utils.dart';
 import 'package:extended_nested_scroll_view/extended_nested_scroll_view.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, clampDouble;
@@ -145,14 +147,17 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
 
   // 接近方形布局：横屏视频右侧可展开的选集 / 评论侧栏
   static const double _minSidePanelWidth = 240;
-  static const double _defaultSidePanelWidth = 360;
   static const double _maxSidePanelWidthRatio = 0.55;
   static const double _maxSeasonPanelWidth = 420;
-  static const double _seasonPanelHeight = 240;
-  static const double _sidePanelDividerWidth = 8;
+  // 选集区块作为整体滚动列表里的一块，只限制最大高度，不再各自独立定位
+  static const double _seasonPanelMaxHeight = 260;
+  // 拖动把手整条都可命中（相比原来的 8 宽扩大到 28），视觉竖线只有 4 宽
+  static const double _sidePanelDividerWidth = 28;
+  static const double _sidePanelHandleWidth = 4;
 
   final RxBool _showSidePanel = false.obs;
-  final RxDouble _sidePanelWidth = _defaultSidePanelWidth.obs;
+  // 宽度持久化：拖动结束后写回设置，下次进入页面直接还原
+  final RxDouble _sidePanelWidth = Pref.foldSidePanelWidth.obs;
 
   @override
   void initState() {
@@ -1066,93 +1071,129 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
         : pgcIntroController.pgcItem.hasEpisodesOrSeasons;
   }
 
-  /// 点赞 / 点踩 / 分享 一行最右侧的侧栏开关
-  Widget get _sidePanelToggle => Obx(() {
-    final show = _showSidePanel.value;
-    return Tooltip(
-      message: show ? '收起侧栏' : '展开侧栏',
+  /// 点赞 / 点踩 / 分享 一行最右侧的侧栏开关。
+  /// 复用 [ActionItem]，与同行其它按钮保持一致的「图标 + 文字」样式。
+  Widget get _sidePanelToggle => Obx(
+    () => ActionItem(
+      icon: const Icon(Icons.view_sidebar_outlined),
+      selectIcon: const Icon(Icons.view_sidebar),
+      selectStatus: _showSidePanel.value,
+      onTap: () => _showSidePanel.value = !_showSidePanel.value,
+      text: '评论',
+      semanticsLabel: '评论',
+    ),
+  );
+
+  /// 侧栏左侧可拖动的边框。整条宽度都是命中区域，松手后把宽度写回设置。
+  Widget _sidePanelDivider(double height, double maxSideWidth) => MouseRegion(
+    cursor: SystemMouseCursors.resizeColumn,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: (details) {
+        _sidePanelWidth.value = clampDouble(
+          _sidePanelWidth.value - details.delta.dx,
+          _minSidePanelWidth,
+          max(maxSideWidth, _minSidePanelWidth),
+        );
+      },
+      onHorizontalDragEnd: (_) =>
+          Pref.foldSidePanelWidth = _sidePanelWidth.value,
+      onHorizontalDragCancel: () =>
+          Pref.foldSidePanelWidth = _sidePanelWidth.value,
       child: SizedBox(
-        width: 48,
-        height: 40,
-        child: IconButton(
-          padding: EdgeInsets.zero,
-          iconSize: 20,
-          icon: Icon(
-            show ? Icons.view_sidebar : Icons.view_sidebar_outlined,
-            color: colorScheme.onSurfaceVariant,
-          ),
-          onPressed: () => _showSidePanel.value = !show,
-        ),
-      ),
-    );
-  });
-
-  /// 侧栏左侧可拖动的边框，拖动改变侧栏宽度
-  Widget _sidePanelDivider(double height, double maxSideWidth) =>
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onHorizontalDragUpdate: (details) {
-          _sidePanelWidth.value = clampDouble(
-            _sidePanelWidth.value - details.delta.dx,
-            _minSidePanelWidth,
-            max(maxSideWidth, _minSidePanelWidth),
-          );
-        },
-        child: SizedBox(
-          width: _sidePanelDividerWidth,
-          height: height,
-          child: Center(
-            child: Container(
-              width: 3,
-              height: 56,
-              decoration: BoxDecoration(
-                color: colorScheme.outline.withValues(alpha: 0.4),
-                borderRadius: const .all(.circular(2)),
-              ),
+        width: _sidePanelDividerWidth,
+        height: height,
+        child: Center(
+          child: Container(
+            width: _sidePanelHandleWidth,
+            height: 64,
+            decoration: BoxDecoration(
+              color: colorScheme.outline.withValues(alpha: 0.4),
+              borderRadius: const .all(.circular(2)),
             ),
           ),
         ),
+      ),
+    ),
+  );
+
+  /// 选集区块：作为整体滚动列表里的一块，限制最大宽度与最大高度
+  List<Widget> _inlineSeasonSlivers(double width) {
+    if (!_hasEpisodeList) return const [];
+    return [
+      SliverToBoxAdapter(
+        child: Center(
+          child: SizedBox(
+            width: min(_maxSeasonPanelWidth, width),
+            height: _seasonPanelMaxHeight,
+            child: seasonPanel,
+          ),
+        ),
+      ),
+    ];
+  }
+
+  /// 右侧区域统一滚动：简介 / 选集 / 评论全部拼进同一个 CustomScrollView，
+  /// 而不是各自占一块固定高度、独立滚动。
+  Widget _almostSquareScrollPane({
+    required List<Widget> leadingSlivers,
+    bool useChildKey = false,
+  }) {
+    final Widget body;
+    if (videoDetailController.showReply) {
+      body = VideoReplyPanel(
+        key: videoReplyPanelKey,
+        isNested: false,
+        heroTag: heroTag,
+        leadingSlivers: leadingSlivers,
       );
-
-  /// 侧栏：上方固定高度且限制最大宽度的选集列表，下方是评论
-  Widget _sidePanelBody(double width, double height) {
-    final hasSeason = _hasEpisodeList;
-    final seasonHeight = hasSeason
-        ? min(_seasonPanelHeight, height * 0.4)
-        : 0.0;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border(
-          left: BorderSide(color: colorScheme.outline.withValues(alpha: 0.12)),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: .start,
-        children: [
-          if (hasSeason)
-            SizedBox(
-              width: width,
-              height: seasonHeight,
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: min(_maxSeasonPanelWidth, width),
-                  ),
-                  child: seasonPanel,
-                ),
-              ),
-            ),
-          if (hasSeason)
-            Divider(
-              height: 1,
-              color: colorScheme.outline.withValues(alpha: 0.1),
-            ),
-          if (videoDetailController.showReply)
-            Expanded(child: videoReplyPanel()),
+    } else {
+      body = CustomScrollView(
+        physics: platformAlwaysClampingPhysics,
+        slivers: [
+          ...leadingSlivers,
+          SliverToBoxAdapter(
+            child: SizedBox(height: padding.bottom + Style.safeSpace),
+          ),
         ],
-      ),
+      );
+    }
+    return MiniScaffold(
+      key: useChildKey ? videoDetailController.childKey : null,
+      body: body,
     );
   }
+
+  /// 接近方形布局里简介对应的 sliver（无外层滚动容器）
+  List<Widget> _almostSquareIntroSlivers({required double width}) {
+    if (videoDetailController.isFileSource) {
+      return [
+        SliverPadding(
+          padding: const .only(top: 7),
+          sliver: LocalIntroPanel(key: videoRelatedKey, heroTag: heroTag),
+        ),
+      ];
+    }
+    return videoIntroSlivers(
+      width: width,
+      isHorizontal: false,
+      needRelated: false,
+      hideInlineSeason: true,
+      addBottomSpacer: false,
+    );
+  }
+
+  /// 侧栏：选集 + 评论共用同一个滚动列表
+  Widget _sidePanelBody(double width) => DecoratedBox(
+    decoration: BoxDecoration(
+      border: Border(
+        left: BorderSide(color: colorScheme.outline.withValues(alpha: 0.12)),
+      ),
+    ),
+    child: _almostSquareScrollPane(
+      leadingSlivers: _inlineSeasonSlivers(width),
+    ),
+  );
 
   /// 横屏视频：视频横向撑满左侧区域、按分辨率决定高度；下方是简介；
   /// 右侧侧栏展开后左侧宽度变化，视频高度按同一比例重新计算
@@ -1178,7 +1219,15 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
           ? max(0.0, fullWidth - sideWidth - _sidePanelDividerWidth)
           : fullWidth;
       final aspect = _videoAspectRatio(false);
-      final videoHeight = clampDouble(leftWidth / aspect, 0.0, height);
+      // 视频容器最小高度按 16:9 计算：超宽片源（如 21:9）不再把播放器压得
+      // 过低，多出来的高度由播放器内部留边填充；侧栏展开/拖动改变 leftWidth
+      // 时这个下限会同步重算。
+      final minVideoHeight = min(leftWidth / Style.aspectRatio16x9, height);
+      final videoHeight = clampDouble(
+        leftWidth / aspect,
+        minVideoHeight,
+        height,
+      );
       final introHeight = max(0.0, height - videoHeight);
 
       final leftPane = Column(
@@ -1217,15 +1266,15 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
           SizedBox(
             width: sideWidth,
             height: height,
-            child: _sidePanelBody(sideWidth, height),
+            child: _sidePanelBody(sideWidth),
           ),
         ],
       );
     });
   }
 
-  /// 竖屏视频：视频竖向撑满屏幕，右侧依次是简介（无推荐视频）、
-  /// 固定高度选集列表、可继续往下滚动的评论
+  /// 竖屏视频：视频竖向撑满屏幕，右侧的简介 / 选集 / 评论拼成
+  /// 同一个滚动列表，整列一起滚动
   Widget _almostSquareVerticalVideo(bool isFullScreen) {
     final height = isFullScreen
         ? maxHeight
@@ -1252,16 +1301,18 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
       height: height,
       child: videoPlayer(width: videoWidth, height: height),
     );
-    final hasSeason = _hasEpisodeList;
-    final seasonHeight = hasSeason
-        ? min(_seasonPanelHeight, height * 0.3)
-        : 0.0;
-    final introHeight = clampDouble(
-      height * 0.4,
-      120.0,
-      max(120.0, height - seasonHeight - 120.0),
-    );
-    final replyHeight = max(0.0, height - introHeight - seasonHeight);
+    final leadingSlivers = <Widget>[
+      ..._almostSquareIntroSlivers(width: rightWidth),
+      if (_hasEpisodeList) ...[
+        SliverToBoxAdapter(
+          child: Divider(
+            height: 1,
+            color: colorScheme.outline.withValues(alpha: 0.1),
+          ),
+        ),
+        ..._inlineSeasonSlivers(rightWidth),
+      ],
+    ];
 
     return Row(
       crossAxisAlignment: .start,
@@ -1270,43 +1321,9 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
         SizedBox(
           width: rightWidth,
           height: height,
-          child: MiniScaffold(
-            key: videoDetailController.childKey,
-            body: Column(
-              crossAxisAlignment: .start,
-              children: [
-                SizedBox(
-                  width: rightWidth,
-                  height: introHeight,
-                  child: videoIntro(
-                    width: rightWidth,
-                    height: introHeight,
-                    isHorizontal: false,
-                    needRelated: false,
-                    hideInlineSeason: true,
-                  ),
-                ),
-                if (hasSeason)
-                  SizedBox(
-                    width: rightWidth,
-                    height: seasonHeight,
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: min(_maxSeasonPanelWidth, rightWidth),
-                        ),
-                        child: seasonPanel,
-                      ),
-                    ),
-                  ),
-                if (videoDetailController.showReply && replyHeight > 0)
-                  SizedBox(
-                    width: rightWidth,
-                    height: replyHeight,
-                    child: videoReplyPanel(),
-                  ),
-              ],
-            ),
+          child: _almostSquareScrollPane(
+            useChildKey: true,
+            leadingSlivers: leadingSlivers,
           ),
         ),
       ],
@@ -1880,60 +1897,14 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
           ? videoDetailController.effectiveIntroScrollCtr
           : null,
       physics: !needCtr ? platformAlwaysClampingPhysics : null,
-      slivers: [
-        if (videoDetailController.isUgc) ...[
-          UgcIntroPanel(
-            key: videoIntroKey,
-            heroTag: heroTag,
-            showAiBottomSheet: showAiBottomSheet,
-            showEpisodes: showEpisodes,
-            onShowMemberPage: onShowMemberPage,
-            isPortrait: isPortrait,
-            isHorizontal:
-                isHorizontal ??
-                (width != null && height != null
-                    ? width / height >= kScreenRatio
-                    : false),
-            actionRowTrailing: actionRowTrailing,
-            hideInlineSeason: hideInlineSeason,
-          ),
-          if (needRelated && videoDetailController.showRelatedVideo) ...[
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(
-                  top: Style.safeSpace,
-                ),
-                child: Divider(
-                  height: 1,
-                  indent: 12,
-                  endIndent: 12,
-                  color: colorScheme.outline.withValues(alpha: .08),
-                ),
-              ),
-            ),
-            RelatedVideoPanel(key: videoRelatedKey, heroTag: heroTag),
-          ],
-        ] else
-          PgcIntroPage(
-            key: videoIntroKey,
-            heroTag: heroTag,
-            showEpisodes: showEpisodes,
-            showIntroDetail: showIntroDetail,
-            maxWidth: width ?? maxWidth,
-            isPortrait: isPortrait,
-            actionRowTrailing: actionRowTrailing,
-            hideInlineSeason: hideInlineSeason,
-          ),
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height:
-                (videoDetailController.isPlayAll && !isPortrait
-                    ? 80
-                    : Style.safeSpace) +
-                padding.bottom,
-          ),
-        ),
-      ],
+      slivers: videoIntroSlivers(
+        width: width,
+        height: height,
+        isHorizontal: isHorizontal,
+        needRelated: needRelated,
+        hideInlineSeason: hideInlineSeason,
+        actionRowTrailing: actionRowTrailing,
+      ),
     );
 
     if (videoDetailController.isPlayAll) {
@@ -1977,6 +1948,74 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
       );
     }
     return KeepAliveWrapper(child: child);
+  }
+
+  /// 简介对应的 sliver 列表。抽出来是为了让接近方形布局可以把简介
+  /// 直接拼进右侧区域的同一个 [CustomScrollView]，而不是套一层独立滚动。
+  List<Widget> videoIntroSlivers({
+    double? width,
+    double? height,
+    bool? isHorizontal,
+    bool needRelated = true,
+    bool hideInlineSeason = false,
+    Widget? actionRowTrailing,
+    bool addBottomSpacer = true,
+  }) {
+    return [
+      if (videoDetailController.isUgc) ...[
+        UgcIntroPanel(
+          key: videoIntroKey,
+          heroTag: heroTag,
+          showAiBottomSheet: showAiBottomSheet,
+          showEpisodes: showEpisodes,
+          onShowMemberPage: onShowMemberPage,
+          isPortrait: isPortrait,
+          isHorizontal:
+              isHorizontal ??
+              (width != null && height != null
+                  ? width / height >= kScreenRatio
+                  : false),
+          actionRowTrailing: actionRowTrailing,
+          hideInlineSeason: hideInlineSeason,
+        ),
+        if (needRelated && videoDetailController.showRelatedVideo) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(
+                top: Style.safeSpace,
+              ),
+              child: Divider(
+                height: 1,
+                indent: 12,
+                endIndent: 12,
+                color: colorScheme.outline.withValues(alpha: .08),
+              ),
+            ),
+          ),
+          RelatedVideoPanel(key: videoRelatedKey, heroTag: heroTag),
+        ],
+      ] else
+        PgcIntroPage(
+          key: videoIntroKey,
+          heroTag: heroTag,
+          showEpisodes: showEpisodes,
+          showIntroDetail: showIntroDetail,
+          maxWidth: width ?? maxWidth,
+          isPortrait: isPortrait,
+          actionRowTrailing: actionRowTrailing,
+          hideInlineSeason: hideInlineSeason,
+        ),
+      if (addBottomSpacer)
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height:
+                (videoDetailController.isPlayAll && !isPortrait
+                    ? 80
+                    : Style.safeSpace) +
+                padding.bottom,
+          ),
+        ),
+    ];
   }
 
   Widget get seasonPanel {

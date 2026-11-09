@@ -63,6 +63,17 @@ abstract final class Pref {
     ),
   );
 
+  // 接近方形布局：横屏视频右侧侧栏宽度，拖动边框后持久化
+  static const double kFoldSidePanelWidth = 360.0;
+
+  static double get foldSidePanelWidth => _setting.get(
+    SettingBoxKey.foldSidePanelWidth,
+    defaultValue: kFoldSidePanelWidth,
+  );
+
+  static set foldSidePanelWidth(double value) =>
+      _setting.put(SettingBoxKey.foldSidePanelWidth, value);
+
   static Set<int> get blackMids =>
       _localCache.get(LocalCacheKey.blackMids, defaultValue: <int>{});
 
