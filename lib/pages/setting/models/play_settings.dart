@@ -69,13 +69,6 @@ List<SettingsModel> get playSettings => [
     onTap: _showSuperResolutionDialog,
   ),
   const SwitchModel(
-    title: '自动播放',
-    subtitle: '进入详情页自动播放',
-    leading: Icon(Icons.motion_photos_auto_outlined),
-    setKey: SettingBoxKey.autoPlayEnable,
-    defaultVal: false,
-  ),
-  const SwitchModel(
     title: '全屏显示锁定按钮',
     leading: Icon(Icons.lock_outline),
     setKey: SettingBoxKey.showFsLockBtn,

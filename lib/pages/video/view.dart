@@ -143,6 +143,17 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
   final videoRelatedKey = GlobalKey();
   final videoIntroKey = GlobalKey();
 
+  // 接近方形布局：横屏视频右侧可展开的选集 / 评论侧栏
+  static const double _minSidePanelWidth = 240;
+  static const double _defaultSidePanelWidth = 360;
+  static const double _maxSidePanelWidthRatio = 0.55;
+  static const double _maxSeasonPanelWidth = 420;
+  static const double _seasonPanelHeight = 240;
+  static const double _sidePanelDividerWidth = 8;
+
+  final RxBool _showSidePanel = false.obs;
+  final RxDouble _sidePanelWidth = _defaultSidePanelWidth.obs;
+
   @override
   void initState() {
     super.initState();
@@ -333,6 +344,8 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
 
   @override
   void dispose() {
+    _showSidePanel.close();
+    _sidePanelWidth.close();
     plPlayerController
       ?..removeStatusLister(playerListener)
       ..removePositionListener(positionListener);
@@ -1005,74 +1018,294 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     );
   });
 
+  /// 接近方形（折叠展开态）：按视频是横屏还是竖屏走两套不同布局
   Widget childWhenDisabledAlmostSquareInner(bool isFullScreen) {
-    if (enableVerticalExpand) {
-      return Obx(
-        () {
-          if (videoDetailController.isVertical.value && !isPortrait) {
-            return childSplit(9 / 16);
-          }
+    return Obx(() {
+      return videoDetailController.isVertical.value
+          ? _almostSquareVerticalVideo(isFullScreen)
+          : _almostSquareHorizontalVideo(isFullScreen);
+    });
+  }
 
-          return _childWhenDisabledAlmostSquareInner(isFullScreen);
+  /// 当前视频真实宽高比（w / h）。资源尚未就绪时按方向返回默认值
+  double _videoAspectRatio(bool isVertical) {
+    double? width;
+    double? height;
+    try {
+      width = videoDetailController.firstVideo.width?.toDouble();
+      height = videoDetailController.firstVideo.height?.toDouble();
+    } catch (_) {
+      // firstVideo 在播放地址返回前是 late，尚未初始化
+    }
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      if (videoDetailController.isUgc &&
+          !videoDetailController.isFileSource) {
+        final pages = ugcIntroController.videoDetail.value.pages;
+        if (pages != null) {
+          final cid = videoDetailController.cid.value;
+          for (final part in pages) {
+            if (part.cid == cid) {
+              width = part.dimension?.width?.toDouble();
+              height = part.dimension?.height?.toDouble();
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      return isVertical ? 9 / 16 : Style.aspectRatio16x9;
+    }
+    return width / height;
+  }
+
+  bool get _hasEpisodeList {
+    if (videoDetailController.isFileSource) return false;
+    return videoDetailController.isUgc
+        ? ugcIntroController.videoDetail.value.hasSeasonOrParts
+        : pgcIntroController.pgcItem.hasEpisodesOrSeasons;
+  }
+
+  /// 点赞 / 点踩 / 分享 一行最右侧的侧栏开关
+  Widget get _sidePanelToggle => Obx(() {
+    final show = _showSidePanel.value;
+    return Tooltip(
+      message: show ? '收起侧栏' : '展开侧栏',
+      child: SizedBox(
+        width: 48,
+        height: 40,
+        child: IconButton(
+          padding: EdgeInsets.zero,
+          iconSize: 20,
+          icon: Icon(
+            show ? Icons.view_sidebar : Icons.view_sidebar_outlined,
+            color: colorScheme.onSurfaceVariant,
+          ),
+          onPressed: () => _showSidePanel.value = !show,
+        ),
+      ),
+    );
+  });
+
+  /// 侧栏左侧可拖动的边框，拖动改变侧栏宽度
+  Widget _sidePanelDivider(double height, double maxSideWidth) =>
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) {
+          _sidePanelWidth.value = clampDouble(
+            _sidePanelWidth.value - details.delta.dx,
+            _minSidePanelWidth,
+            max(maxSideWidth, _minSidePanelWidth),
+          );
         },
+        child: SizedBox(
+          width: _sidePanelDividerWidth,
+          height: height,
+          child: Center(
+            child: Container(
+              width: 3,
+              height: 56,
+              decoration: BoxDecoration(
+                color: colorScheme.outline.withValues(alpha: 0.4),
+                borderRadius: const .all(.circular(2)),
+              ),
+            ),
+          ),
+        ),
+      );
+
+  /// 侧栏：上方固定高度且限制最大宽度的选集列表，下方是评论
+  Widget _sidePanelBody(double width, double height) {
+    final hasSeason = _hasEpisodeList;
+    final seasonHeight = hasSeason
+        ? min(_seasonPanelHeight, height * 0.4)
+        : 0.0;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: colorScheme.outline.withValues(alpha: 0.12)),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: .start,
+        children: [
+          if (hasSeason)
+            SizedBox(
+              width: width,
+              height: seasonHeight,
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: min(_maxSeasonPanelWidth, width),
+                  ),
+                  child: seasonPanel,
+                ),
+              ),
+            ),
+          if (hasSeason)
+            Divider(
+              height: 1,
+              color: colorScheme.outline.withValues(alpha: 0.1),
+            ),
+          if (videoDetailController.showReply)
+            Expanded(child: videoReplyPanel()),
+        ],
+      ),
+    );
+  }
+
+  /// 横屏视频：视频横向撑满左侧区域、按分辨率决定高度；下方是简介；
+  /// 右侧侧栏展开后左侧宽度变化，视频高度按同一比例重新计算
+  Widget _almostSquareHorizontalVideo(bool isFullScreen) {
+    if (isFullScreen) {
+      return SizedBox(
+        width: maxWidth,
+        height: maxHeight,
+        child: videoPlayer(width: maxWidth, height: maxHeight),
+      );
+    }
+    final height = max(0.0, maxHeight - padding.top);
+    final fullWidth = max(0.0, maxWidth - padding.horizontal);
+    return Obx(() {
+      final showSide = _showSidePanel.value;
+      final maxSideWidth = fullWidth * _maxSidePanelWidthRatio;
+      final sideWidth = clampDouble(
+        _sidePanelWidth.value,
+        _minSidePanelWidth,
+        max(maxSideWidth, _minSidePanelWidth),
+      );
+      final leftWidth = showSide
+          ? max(0.0, fullWidth - sideWidth - _sidePanelDividerWidth)
+          : fullWidth;
+      final aspect = _videoAspectRatio(false);
+      final videoHeight = clampDouble(leftWidth / aspect, 0.0, height);
+      final introHeight = max(0.0, height - videoHeight);
+
+      final leftPane = Column(
+        crossAxisAlignment: .start,
+        children: [
+          SizedBox(
+            width: leftWidth,
+            height: videoHeight,
+            child: videoPlayer(width: leftWidth, height: videoHeight),
+          ),
+          SizedBox(
+            width: leftWidth,
+            height: introHeight,
+            child: MiniScaffold(
+              key: videoDetailController.childKey,
+              body: videoIntro(
+                width: leftWidth,
+                height: introHeight,
+                isHorizontal: false,
+                needRelated: false,
+                hideInlineSeason: true,
+                actionRowTrailing: _sidePanelToggle,
+              ),
+            ),
+          ),
+        ],
+      );
+
+      if (!showSide) return leftPane;
+
+      return Row(
+        crossAxisAlignment: .start,
+        children: [
+          SizedBox(width: leftWidth, height: height, child: leftPane),
+          _sidePanelDivider(height, maxSideWidth),
+          SizedBox(
+            width: sideWidth,
+            height: height,
+            child: _sidePanelBody(sideWidth, height),
+          ),
+        ],
+      );
+    });
+  }
+
+  /// 竖屏视频：视频竖向撑满屏幕，右侧依次是简介（无推荐视频）、
+  /// 固定高度选集列表、可继续往下滚动的评论
+  Widget _almostSquareVerticalVideo(bool isFullScreen) {
+    final height = isFullScreen
+        ? maxHeight
+        : max(0.0, maxHeight - padding.top);
+    final fullWidth = isFullScreen
+        ? maxWidth
+        : max(0.0, maxWidth - padding.horizontal);
+    final aspect = _videoAspectRatio(true);
+    final videoWidth = isFullScreen
+        ? fullWidth
+        : clampDouble(height * aspect, 0.0, fullWidth * 0.6);
+
+    if (isFullScreen) {
+      return SizedBox(
+        width: fullWidth,
+        height: height,
+        child: videoPlayer(width: fullWidth, height: height),
       );
     }
 
-    return _childWhenDisabledAlmostSquareInner(isFullScreen);
-  }
+    final rightWidth = max(0.0, fullWidth - videoWidth);
+    final player = SizedBox(
+      width: videoWidth,
+      height: height,
+      child: videoPlayer(width: videoWidth, height: height),
+    );
+    final hasSeason = _hasEpisodeList;
+    final seasonHeight = hasSeason
+        ? min(_seasonPanelHeight, height * 0.3)
+        : 0.0;
+    final introHeight = clampDouble(
+      height * 0.4,
+      120.0,
+      max(120.0, height - seasonHeight - 120.0),
+    );
+    final replyHeight = max(0.0, height - introHeight - seasonHeight);
 
-  Widget _childWhenDisabledAlmostSquareInner(bool isFullScreen) {
-    final shouldShowSeasonPanel = _shouldShowSeasonPanel;
-    final double height = maxHeight / 2.5;
-    final videoHeight = isFullScreen
-        ? maxHeight - (isWindowMode && !isPortrait ? 0 : padding.top)
-        : height;
-    final bottomHeight = maxHeight - height - padding.top;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
+      crossAxisAlignment: .start,
       children: [
+        player,
         SizedBox(
-          width: maxWidth,
-          height: videoHeight,
-          child: videoPlayer(
-            width: maxWidth,
-            height: videoHeight,
-          ),
-        ),
-        Offstage(
-          offstage: isFullScreen,
-          child: SizedBox(
-            width: maxWidth - padding.horizontal,
-            height: bottomHeight,
-            child: MiniScaffold(
-              key: videoDetailController.childKey,
-              body: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  buildTabBar(needIndicator: false),
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: videoIntro(
-                            width: () {
-                              double flex = 1;
-                              if (videoDetailController.showReply) flex++;
-                              if (shouldShowSeasonPanel) flex++;
-                              return maxWidth / flex;
-                            }(),
-                            height: bottomHeight,
-                          ),
+          width: rightWidth,
+          height: height,
+          child: MiniScaffold(
+            key: videoDetailController.childKey,
+            body: Column(
+              crossAxisAlignment: .start,
+              children: [
+                SizedBox(
+                  width: rightWidth,
+                  height: introHeight,
+                  child: videoIntro(
+                    width: rightWidth,
+                    height: introHeight,
+                    isHorizontal: false,
+                    needRelated: false,
+                    hideInlineSeason: true,
+                  ),
+                ),
+                if (hasSeason)
+                  SizedBox(
+                    width: rightWidth,
+                    height: seasonHeight,
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: min(_maxSeasonPanelWidth, rightWidth),
                         ),
-                        if (videoDetailController.showReply)
-                          Expanded(child: videoReplyPanel()),
-                        if (shouldShowSeasonPanel) Expanded(child: seasonPanel),
-                      ],
+                        child: seasonPanel,
+                      ),
                     ),
                   ),
-                ],
-              ),
+                if (videoDetailController.showReply && replyHeight > 0)
+                  SizedBox(
+                    width: rightWidth,
+                    height: replyHeight,
+                    child: videoReplyPanel(),
+                  ),
+              ],
             ),
           ),
         ),
@@ -1634,6 +1867,8 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     bool? isHorizontal,
     bool needRelated = true,
     bool needCtr = true,
+    bool hideInlineSeason = false,
+    Widget? actionRowTrailing,
   }) {
     if (videoDetailController.isFileSource) {
       return localIntroPanel(needCtr: needCtr);
@@ -1654,7 +1889,13 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
             showEpisodes: showEpisodes,
             onShowMemberPage: onShowMemberPage,
             isPortrait: isPortrait,
-            isHorizontal: isHorizontal ?? width! / height! >= kScreenRatio,
+            isHorizontal:
+                isHorizontal ??
+                (width != null && height != null
+                    ? width / height >= kScreenRatio
+                    : false),
+            actionRowTrailing: actionRowTrailing,
+            hideInlineSeason: hideInlineSeason,
           ),
           if (needRelated && videoDetailController.showRelatedVideo) ...[
             SliverToBoxAdapter(
@@ -1680,6 +1921,8 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
             showIntroDetail: showIntroDetail,
             maxWidth: width ?? maxWidth,
             isPortrait: isPortrait,
+            actionRowTrailing: actionRowTrailing,
+            hideInlineSeason: hideInlineSeason,
           ),
         SliverToBoxAdapter(
           child: SizedBox(

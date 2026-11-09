@@ -58,6 +58,8 @@ class UgcIntroPanel extends StatefulWidget {
     required this.onShowMemberPage,
     required this.isPortrait,
     required this.isHorizontal,
+    this.actionRowTrailing,
+    this.hideInlineSeason = false,
   });
   final String heroTag;
   final Function showAiBottomSheet;
@@ -65,6 +67,8 @@ class UgcIntroPanel extends StatefulWidget {
   final ValueChanged<int?> onShowMemberPage;
   final bool isPortrait;
   final bool isHorizontal;
+  final Widget? actionRowTrailing;
+  final bool hideInlineSeason;
 
   @override
   State<UgcIntroPanel> createState() => _UgcIntroPanelState();
@@ -173,7 +177,7 @@ class _UgcIntroPanelState extends State<UgcIntroPanel> {
                           ),
                   ),
                   // 点赞收藏转发 布局样式2
-                  if (!isHorizontal) ...[
+                  if (!isHorizontal || widget.actionRowTrailing != null) ...[
                     const SizedBox(height: 8),
                     actionGrid(
                       context,
@@ -184,6 +188,7 @@ class _UgcIntroPanelState extends State<UgcIntroPanel> {
                   ],
                   // 合集
                   if (!isLoading &&
+                      !widget.hideInlineSeason &&
                       (isPortrait ||
                           !videoDetailCtr
                               .plPlayerController
@@ -551,6 +556,7 @@ class _UgcIntroPanelState extends State<UgcIntroPanel> {
             semanticsLabel: '分享',
             text: !isLoading ? NumUtils.numFormat(stat!.share!) : null,
           ),
+          if (widget.actionRowTrailing != null) widget.actionRowTrailing!,
         ],
       ),
     );

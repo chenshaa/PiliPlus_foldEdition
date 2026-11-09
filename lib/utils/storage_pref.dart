@@ -686,8 +686,8 @@ abstract final class Pref {
   static bool get autoExitFullscreen =>
       _setting.get(SettingBoxKey.enableAutoExit, defaultValue: true);
 
-  static bool get autoPlayEnable =>
-      _setting.get(SettingBoxKey.autoPlayEnable, defaultValue: false);
+  // 自动播放已改为常开，不再提供设置项
+  static bool get autoPlayEnable => true;
 
   static bool get pipNoDanmaku =>
       _setting.get(SettingBoxKey.pipNoDanmaku, defaultValue: false);

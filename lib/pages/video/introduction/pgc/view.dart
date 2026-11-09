@@ -34,6 +34,8 @@ class PgcIntroPage extends StatefulWidget {
   showIntroDetail;
   final double maxWidth;
   final bool isPortrait;
+  final Widget? actionRowTrailing;
+  final bool hideInlineSeason;
 
   const PgcIntroPage({
     super.key,
@@ -42,6 +44,8 @@ class PgcIntroPage extends StatefulWidget {
     required this.showIntroDetail,
     required this.maxWidth,
     required this.isPortrait,
+    this.actionRowTrailing,
+    this.hideInlineSeason = false,
   });
 
   @override
@@ -87,9 +91,19 @@ class _PgcIntroPageState extends State<PgcIntroPage> {
           ),
           const SizedBox(height: 6),
           // 点赞收藏转发 布局样式2
-          if (introController.isPgc) actionGrid(item.stat!, introController),
-          if (isPortrait ||
-              !videoDetailCtr.plPlayerController.horizontalSeasonPanel) ...[
+          if (introController.isPgc)
+            actionGrid(item.stat!, introController)
+          else if (widget.actionRowTrailing != null)
+            SizedBox(
+              height: 48,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [widget.actionRowTrailing!],
+              ),
+            ),
+          if (!widget.hideInlineSeason &&
+              (isPortrait ||
+                  !videoDetailCtr.plPlayerController.horizontalSeasonPanel)) ...[
             // seasons
             if (item.hasSeasons)
               Padding(
@@ -471,6 +485,7 @@ class _PgcIntroPageState extends State<PgcIntroPage> {
             semanticsLabel: '转发',
             text: NumUtils.numFormat(stat.share),
           ),
+          if (widget.actionRowTrailing != null) widget.actionRowTrailing!,
         ],
       ),
     );
